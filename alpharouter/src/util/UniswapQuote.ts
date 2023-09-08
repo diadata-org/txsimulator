@@ -35,7 +35,7 @@ import {
   routeAmountsToString,
 } from "@uniswap/smart-order-router";
 
-export class Quote {
+export class UniswapQuote {
   static description = "Uniswap Smart Order Router CLI";
 
   async get(

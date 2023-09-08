@@ -9,11 +9,12 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"simulated/router"
 	"simulated/simulation"
-	"simulated/uniswaprouter"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
@@ -29,6 +30,8 @@ func startSimulatedBackend(simulatedBackend *backends.SimulatedBackend) {
 
 }
 
+const RouterAPI = "http://localhost:3000/alpharouter/api"
+
 func main() {
 
 	startServer()
@@ -41,6 +44,69 @@ func main() {
 
 
 */
+
+func curvetx(param []int, path []string, amount string) (string, error) {
+	const curveRouterABI = `[{
+		"stateMutability": "payable",
+		"type": "function",
+		"name": "exchange_multiple",
+		"inputs": [{
+			"name": "_route",
+			"type": "address[9]"
+		}, {
+			"name": "_swap_params",
+			"type": "uint256[3][4]"
+		}, {
+			"name": "_amount",
+			"type": "uint256"
+		}, {
+			"name": "_expected",
+			"type": "uint256"
+		}, {
+			"name": "_pools",
+			"type": "address[4]"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "uint256"
+		}]
+	}]`
+
+	var (
+		route      [9]common.Address
+		curvePath  [4]common.Address
+		swapParams [4][3]*big.Int
+	)
+
+	for len(param) < 12 {
+		param = append(param, 0)
+	}
+
+	index := 0
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 3; j++ {
+			swapParams[i][j] = big.NewInt(int64(param[index]))
+			index++
+		}
+	}
+
+	for index, address := range path {
+		route[index] = common.HexToAddress(address)
+	}
+
+	routerABI, err := abi.JSON(strings.NewReader(curveRouterABI))
+	if err != nil {
+		return "", err
+	}
+	amountin, _ := new(big.Int).SetString(amount, 10)
+
+	expected, _ := new(big.Int).SetString("0", 10)
+
+	swapData, err := routerABI.Pack("exchange_multiple", route, swapParams, amountin, expected, curvePath)
+
+	return hex.EncodeToString(swapData), err
+
+}
 
 func uniswaptx(fromaddress string, client *backends.SimulatedBackend) {
 	const uniswapRouterABI = `[{"constant":false,"inputs":[{"name":"amountIn","type":"uint256"},{"name":"amountOutMin","type":"uint256"},{"name":"path","type":"address[]"},{"name":"to","type":"address"},{"name":"deadline","type":"uint256"}],"name":"swapExactTokensForTokens","outputs":[{"name":"amounts","type":"uint256[]"}],"payable":false,"stateMutability":"nonpayable","type":"function"}]`
@@ -202,12 +268,11 @@ func logRouteMiddleware(w http.ResponseWriter, r *http.Request) {
 func startServer() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8085" // Default port if not specified in env vars
+		port = "8085"
 	}
-	// http.HandleFunc("/tradeSimulator", tradeSimulator)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/tradeSimulator", tradeSimulator)
+	mux.HandleFunc("/tradesimulator/tradeSimulator", tradeSimulator)
 
 	// Add custom middleware to log available routes
 	mux.HandleFunc("/", logRouteMiddleware)
@@ -217,6 +282,8 @@ func startServer() {
 }
 
 func tradeSimulator(w http.ResponseWriter, r *http.Request) {
+
+	log.Println("tradeSimulator", "tradeSimulator")
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -242,53 +309,104 @@ func tradeSimulator(w http.ResponseWriter, r *http.Request) {
 	amount := requestData["amountStr"]
 	tokenOut := requestData["tokenOutStr"]
 	tokenIn := requestData["tokenInStr"]
+	blocknumberStr := requestData["blocknumber"]
 
-	fmt.Printf("Recipient: %s, Amount: %s, Token Out: %s, Token In: %s\n", from, amount, tokenOut, tokenIn)
+	blocknumber, _ := strconv.ParseInt(blocknumberStr, 10, 64)
+
+	protocol := requestData["protocol"]
+
+	if protocol == "" {
+		protocol = router.ProtocolUniswap
+	}
+
+	fmt.Printf("Recipient: %s, Amount: %s, Token Out: %s, Token In: %s  Protocol: %s\n", from, amount, tokenOut, tokenIn, protocol)
 
 	// from := "0x000000000000000000000000000000000000dead"
 	// tokenIn := "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 	// tokenOut := "0x84cA8bc7997272c7CfB4D0Cd3D55cd942B3c9419"
 	// amount := "10"
 
-	permit2 := "0x000000000022d473030f116ddee9f6b43ac78ba3"
-	universalrouter := "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"
-
-	s := simulation.NewSimulation(1)
-
-	// Approve token to permit 2
-
-	data := approve(permit2)
-
-	s.AddTx(from, tokenIn, data, "0", 30000000)
-
-	// Approve token to permit 2 to UR
-
-	data = approvepermit2(tokenIn, universalrouter)
-
-	s.AddTx(from, permit2, data, "0", 30000000)
-
-	//swap
-
-	// get swap data from uniroutrer endpoint
-
-	usr := uniswaprouter.NewUniSwapRouter()
-
-	fmt.Println("getting data from uniswap router")
-
-	res := usr.GetRoutingInfo(tokenIn, tokenOut, amount, from)
-
-	data = res.Data
-	s.AddTx(from, universalrouter, data, "0", 30000000)
-	events := s.SwapEvents()
-
+	var (
+		events []map[string]interface{}
+		res    router.RouterResponse
+	)
 	amountOutput := big.NewInt(0)
 
-	if len(events) > 0 {
-		lastEvent := events[len(events)-1]
-		fmt.Println("out", events[len(events)-1])
-		amountOutput = lastEvent["amount0"].(*big.Int).Abs(lastEvent["amount0"].(*big.Int))
-		fmt.Println(amountOutput)
+	switch protocol {
+
+	case router.ProtocolUniswap:
+		{
+			permit2 := "0x000000000022d473030f116ddee9f6b43ac78ba3"
+			universalrouter := "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"
+
+			s := simulation.NewSimulation(1)
+
+			// Approve token to permit 2
+
+			data := approve(permit2)
+
+			s.AddTx(from, tokenIn, data, "0", blocknumber, 30000000)
+
+			// Approve token to permit 2 to UR
+
+			data = approvepermit2(tokenIn, universalrouter)
+
+			s.AddTx(from, permit2, data, "0", blocknumber, 30000000)
+
+			//swap
+
+			// get swap data from uniroutrer endpoint
+
+			usr := router.NewRouter(router.ProtocolUniswap, RouterAPI)
+
+			fmt.Println("getting data from uniswap router")
+
+			res = usr.GetRoutingInfo(tokenIn, tokenOut, amount, from)
+
+			data = res.Data
+			s.AddTx(from, universalrouter, data, "0", blocknumber, 30000000)
+			result := s.SwapEvents()
+
+			events = usr.FilterEvents(result)
+
+			if len(events) > 0 {
+				lastEvent := events[len(events)-1]
+				fmt.Println("out", events[len(events)-1])
+				amountOutput = lastEvent["amount0"].(*big.Int).Abs(lastEvent["amount0"].(*big.Int))
+				fmt.Println(amountOutput)
+			}
+		}
+	case router.ProtocolCurveFi:
+		{
+
+			curverouter := "0x99a58482BD75cbab83b27EC03CA68fF489b5788f"
+
+			s := simulation.NewSimulation(1)
+
+			data := approve(curverouter)
+
+			s.AddTx(from, tokenIn, data, "0", blocknumber, 30000000)
+
+			usr := router.NewRouter(router.ProtocolCurveFi, RouterAPI)
+
+			res = usr.GetRoutingInfo(tokenIn, tokenOut, amount, from)
+
+			data, err = curvetx(res.Param, res.Path, amount)
+			if err != nil {
+				log.Println("Error getting data for curve", err)
+			}
+
+			s.AddTx(from, curverouter, data, "0", blocknumber, 30000000)
+
+			log.Println(s.RequestJSON())
+
+			result := s.SwapEvents()
+			events = usr.FilterEvents(result)
+
+		}
+
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	response := make(map[string]interface{})

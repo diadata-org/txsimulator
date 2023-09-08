@@ -5,12 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
-	"strings"
-
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 type TransactionRequest struct {
@@ -20,7 +15,7 @@ type TransactionRequest struct {
 	Data        string `json:"data"`
 	GasLimit    int    `json:"gasLimit"`
 	Value       string `json:"value"`
-	BlockNumber int    `json:"blockNumber"`
+	BlockNumber int64  `json:"blockNumber"`
 	FormatTrace bool   `json:"formatTrace"`
 }
 
@@ -46,18 +41,17 @@ type Result struct {
 }
 
 type Simulate struct {
-	request          []TransactionRequest
-	ChainID          int
-	uniswapV3PoolABI abi.ABI
+	request []TransactionRequest
+	ChainID int
 }
 
 func NewSimulation(ChainID int) *Simulate {
-	uniswapV3PoolABI, _ := abi.JSON(strings.NewReader(uniswapv3poolabi))
-	return &Simulate{ChainID: ChainID, uniswapV3PoolABI: uniswapV3PoolABI}
+
+	return &Simulate{ChainID: ChainID}
 }
 
-func (s *Simulate) AddTx(from, to, data, value string, gaslimit int) {
-	tx := TransactionRequest{From: from, To: to, Data: data, Value: value, GasLimit: gaslimit, ChainID: s.ChainID, BlockNumber: 17778361}
+func (s *Simulate) AddTx(from, to, data, value string, blocknumber int64, gaslimit int) {
+	tx := TransactionRequest{From: from, To: to, Data: data, Value: value, GasLimit: gaslimit, ChainID: s.ChainID, BlockNumber: blocknumber}
 	s.request = append(s.request, tx)
 }
 
@@ -66,26 +60,9 @@ func (s *Simulate) RequestJSON() string {
 	return string(b[:])
 }
 
-func (s *Simulate) SwapEvents() (events []map[string]interface{}) {
+func (s *Simulate) SwapEvents() []Result {
 	results := s.call()
-
-	for _, l := range results[2].Logs {
-		if l.Topics[0] == "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67" {
-			fmt.Println("Event Address:", l.Address)
-			fmt.Println("Event Topics:", l.Topics)
-			fmt.Println("Event Data:", l.Data)
-
-			swapevent := make(map[string]interface{})
-			e := s.uniswapV3PoolABI.UnpackIntoMap(swapevent, "Swap", hexutil.MustDecode(l.Data))
-			if e != nil {
-				log.Println("swapevent err", e)
-			}
-
-			events = append(events, swapevent)
-
-		}
-	}
-	return
+	return results
 }
 
 func (s *Simulate) call() (r []Result) {
