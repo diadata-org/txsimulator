@@ -3,13 +3,16 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
+	"math/big"
 	"net/http"
-	"simulated/simulation"
+	"simulated/models"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
@@ -51,12 +54,22 @@ func NewRouter(protocol, routerAPI string) *Router {
 	return &Router{protocol: protocol, abi: tempAbi, routerAPI: routerAPI}
 }
 
+type SwapEvent struct {
+	Contract   common.Address
+	Sender     common.Address
+	To         common.Address
+	Amount0In  *big.Int
+	Amount1In  *big.Int
+	Amount0Out *big.Int
+	Amount1Out *big.Int
+}
+
 func (s *Router) GetRoutingInfo(tokenIn, tokenOut, amount, recipient string) RouterResponse {
 	req := RouterRequest{Protocol: s.protocol, TokenInStr: tokenIn, TokenOutStr: tokenOut, AmountStr: amount, Recipient: recipient}
 	return s.call(req)
 }
 
-func (s *Router) FilterEvents(results []simulation.Result) (events []map[string]interface{}) {
+func (s *Router) FilterEvents(results []models.Result) (events []map[string]interface{}) {
 
 	switch s.protocol {
 	case ProtocolCurveFi:
@@ -76,16 +89,38 @@ func (s *Router) FilterEvents(results []simulation.Result) (events []map[string]
 		}
 
 	case ProtocolUniswap:
-		for _, l := range results[2].Logs {
-			if l.Topics[0] == "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67" {
-				swapevent := make(map[string]interface{})
-				e := s.abi.UnpackIntoMap(swapevent, "Swap", hexutil.MustDecode(l.Data))
-				if e != nil {
-					log.Println("UnpackIntoMap Uniswap", e)
+
+		if len(results) >= 3 {
+			for _, l := range results[2].Logs {
+				fmt.Println("-----.Topics", l.Topics)
+
+				if l.Topics[0] == "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822" {
+					swapevent := make(map[string]interface{})
+
+					// e := s.abi.UnpackIntoInterface(&ev, "Swap", hexutil.MustDecode(l.Data))
+					// if e != nil {
+					// 	log.Println("UnpackIntoMap Uniswap", e)
+					// }
+
+					// fmt.Println("ev", ev)
+
+					data := hexutil.MustDecode(l.Data)
+
+					in0 := new(big.Int).SetBytes(data[:32])
+					in1 := new(big.Int).SetBytes(data[32:64])
+					out0 := new(big.Int).SetBytes(data[64:96])
+					out1 := new(big.Int).SetBytes(data[96:])
+
+					fmt.Println("in0", in0.Int64())
+					fmt.Println("in1", in1.Int64())
+					fmt.Println("out0", out0.Int64())
+					fmt.Println("out1", out1.Int64())
+
+					swapevent["amount0"] = out0
+
+					events = append(events, swapevent)
+
 				}
-
-				events = append(events, swapevent)
-
 			}
 		}
 	}

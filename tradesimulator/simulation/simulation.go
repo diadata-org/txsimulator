@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"simulated/models"
 )
 
 type TransactionRequest struct {
@@ -19,39 +20,19 @@ type TransactionRequest struct {
 	FormatTrace bool   `json:"formatTrace"`
 }
 
-type Result struct {
-	SimulationID int  `json:"simulationId"`
-	GasUsed      int  `json:"gasUsed"`
-	BlockNumber  int  `json:"blockNumber"`
-	Success      bool `json:"success"`
-	Trace        []struct {
-		CallType string `json:"callType"`
-		From     string `json:"from"`
-		To       string `json:"to"`
-		Value    string `json:"value"`
-	} `json:"trace"`
-	FormattedTrace any `json:"formattedTrace"`
-	Logs           []struct {
-		Address string   `json:"address"`
-		Topics  []string `json:"topics"`
-		Data    string   `json:"data"`
-	} `json:"logs"`
-	ExitReason string `json:"exitReason"`
-	ReturnData string `json:"returnData"`
-}
-
 type Simulate struct {
 	request []TransactionRequest
 	ChainID int
+	URL     string
 }
 
-func NewSimulation(ChainID int) *Simulate {
+func NewSimulation(ChainID int, URL string) *Simulate {
 
-	return &Simulate{ChainID: ChainID}
+	return &Simulate{ChainID: ChainID, URL: URL}
 }
 
 func (s *Simulate) AddTx(from, to, data, value string, blocknumber int64, gaslimit int) {
-	tx := TransactionRequest{From: from, To: to, Data: data, Value: value, GasLimit: gaslimit, ChainID: s.ChainID, BlockNumber: blocknumber}
+	tx := TransactionRequest{From: from, To: to, Data: data, Value: value, GasLimit: gaslimit, ChainID: s.ChainID, BlockNumber: blocknumber, FormatTrace: true}
 	s.request = append(s.request, tx)
 }
 
@@ -60,17 +41,18 @@ func (s *Simulate) RequestJSON() string {
 	return string(b[:])
 }
 
-func (s *Simulate) SwapEvents() []Result {
+func (s *Simulate) SwapEvents() []models.Result {
 	results := s.call()
 	return results
 }
 
-func (s *Simulate) call() (r []Result) {
-	url := "http://localhost:8080/api/v1/simulate-bundle"
+func (s *Simulate) call() (r []models.Result) {
 	method := "POST"
 	client := &http.Client{}
 	b, _ := json.Marshal(s.request)
-	req, err := http.NewRequest(method, url, bytes.NewReader(b))
+
+	fmt.Println("string(b[:])", string(b[:]))
+	req, err := http.NewRequest(method, s.URL, bytes.NewReader(b))
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -82,14 +64,18 @@ func (s *Simulate) call() (r []Result) {
 		fmt.Println(err)
 		return
 	}
+
 	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
+
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
 	json.Unmarshal(body, &r)
+	fmt.Println("----cal", r)
+
 	return
 }

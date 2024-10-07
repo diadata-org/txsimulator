@@ -5,7 +5,10 @@ import { config } from "dotenv";
 import _ from "lodash";
 import  curve  from "@curvefi/api";
 
-import { UniswapQuote } from "./util/UniswapQuote.js";
+// import { UniswapQuote } from "./util/UniswapQuote.js";
+
+import * as Config from '@oclif/config';
+
 
 import { setGlobalLogger } from "@uniswap/smart-order-router";
 import express, { Request, Response } from "express";
@@ -56,7 +59,7 @@ app.post("/alpharouter/api", async (req: Request, res: Response) => {
   switch (protocol) {
     case "uniswap":
       {
-        let q = new UniswapQuote();
+        let q = new Quote();
         response = await q.get(tokenInStr, tokenOutStr, amountStr, recipient);
       }
 
@@ -82,9 +85,9 @@ await (async () => {
   route.forEach(routeStep => {
     path.push(routeStep.poolAddress)
     path.push(routeStep.outputCoinAddress)
-    param.push(routeStep.i)
-    param.push(routeStep.j)
-    param.push(routeStep.swapType)
+    // param.push(routeStep.i)
+    // param.push(routeStep.j)
+    // param.push(routeStep.swapType)
 
   });
 
@@ -107,6 +110,7 @@ app.listen(port, () => {
 
 import bunyan from "bunyan";
 import bunyanDebugStream from "bunyan-debug-stream";
+import { Quote } from "./util/quote.js";
 
 config();
 
